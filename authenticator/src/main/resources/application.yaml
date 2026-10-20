@@ -1,0 +1,7 @@
+spring:
+  org:
+    name: COAC San José
+  application:
+    name: authenticator
+  profiles:
+    active: dev

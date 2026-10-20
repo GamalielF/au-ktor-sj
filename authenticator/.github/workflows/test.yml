@@ -1,0 +1,87 @@
+name: Deploy Test
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+
+jobs:
+  test-deploy:
+    name: Deploy Test Spring Boot Service
+    runs-on: [self-hosted, Rocky]
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure test variables
+        run: |
+          REPO_NAME=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_-]//g')
+          echo "CONTAINER_NAME=test-$REPO_NAME" >> $GITHUB_ENV
+          echo "IMAGE_NAME=app/$REPO_NAME:test" >> $GITHUB_ENV
+          echo "HOST=pre-prod.coopsanjose.fin.ec" >> $GITHUB_ENV
+          echo "APP_PATH=/$REPO_NAME" >> $GITHUB_ENV
+
+      - name: Retrieve Secrets from Vault via OIDC
+        uses: hashicorp/vault-action@v3
+        with:
+          url: https://vault.pre-prod.coopsanjose.fin.ec
+          role: github-actions-coacsanjose
+          method: jwt
+          jwtGithubAudience: https://github.com/COACSanJose
+          tlsSkipVerify: true
+          secrets: |
+            secret/data/coacsanjose/${{ github.event.repository.name }}/test * | VAULT_SECRETS_JSON ;
+
+      - name: Build Spring Boot Docker Image
+        run: |
+          docker build -t "${{ env.IMAGE_NAME }}" .
+
+      - name: Deploy Test Container
+        run: |
+          docker stop "${{ env.CONTAINER_NAME }}" || true
+          docker rm "${{ env.CONTAINER_NAME }}" || true
+
+          ENV_ARGS=()
+          for var in ${!VAULT_SECRETS_JSON*}; do
+            key="${var#VAULT_SECRETS_JSON}"
+            key="${key,,}"
+            ENV_ARGS+=("-e" "${key}=${!var}")
+          done
+
+          docker run -d \
+            --name "${{ env.CONTAINER_NAME }}" \
+            --restart always \
+            --network proxy-network \
+            "${ENV_ARGS[@]}" \
+            -e SPRING_PROFILES_ACTIVE=dev \
+            -e SERVER_SERVLET_CONTEXT_PATH=${{ env.APP_PATH }} \
+            --label "traefik.enable=true" \
+            --label "traefik.http.routers.${{ env.CONTAINER_NAME }}.rule=Host(\"${{ env.HOST }}\") && PathPrefix(\"${{ env.APP_PATH }}\")" \
+            --label "traefik.http.routers.${{ env.CONTAINER_NAME }}.entrypoints=websecure" \
+            --label "traefik.http.routers.${{ env.CONTAINER_NAME }}.tls=true" \
+            "${{ env.IMAGE_NAME }}"
+
+          if docker network ls --format '{{.Name}}' | grep -q '^auth-network$'; then
+            docker network connect auth-network "${{ env.CONTAINER_NAME }}" || true
+          fi 
+
+      - name: Test URL
+        run: |
+          echo "========================================================================="
+          echo "URL: https://${{ env.HOST }}${{ env.APP_PATH }}/"
+          echo "Container: ${{ env.CONTAINER_NAME }}"
+          echo "========================================================================="
+
+      - name: Clean up unused Docker images
+        run: |
+          docker image prune -f
+

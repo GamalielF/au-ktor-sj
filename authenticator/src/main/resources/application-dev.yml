@@ -1,0 +1,45 @@
+spring:
+  cors:
+    allowed-origins: ${cors_allowed_origins}
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${db_url}
+    username: ${db_username}
+    password: ${db_password}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+server:
+  port: 8085
+
+logging:
+  level:
+    root: INFO
+    ec.fin.sanjose.authenticator: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+jwt:
+  private-key: ${jwt_private_key}
+  public-key: ${jwt_public_key}
+  expiration: 86400000
+  refresh-expiration: 604800000
+
+IdP:
+  auth:
+    url: ${idp_url}
+
